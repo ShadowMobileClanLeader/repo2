@@ -45,8 +45,9 @@ class Bar:
 class Target:
     weight: float                       # signed fraction of strategy equity; 0 = flat
     entry_stop: float | None = None     # enter via stop order at this level (only when flat)
-    stop_loss: float | None = None      # protective stop for the resulting position
+    stop_loss: float | None = None      # protective stop for the resulting position (fixed level)
     reason: str = ""
+    stop_offset: float | None = None    # protective stop at (executed entry price -/+ offset), for entries
 
 
 _order_ids = itertools.count(1)
@@ -60,7 +61,8 @@ class Order:
     stop_price: float | None = None
     purpose: str = "rebalance"          # entry | exit | rebalance | stop_loss | flatten | kill
     reason: str = ""
-    attached_stop_loss: float | None = None   # OTO child stop created on fill
+    attached_stop_loss: float | None = None   # OTO child stop created on fill (fixed level)
+    attached_stop_offset: float | None = None # OTO child stop at fill price -/+ offset
     created: pd.Timestamp | None = None
     id: int = field(default_factory=lambda: next(_order_ids))
     broker_id: str | None = None
@@ -78,6 +80,11 @@ class Fill:
     purpose: str
     reason: str
     note: str = ""
+
+
+def child_stop_level(entry_qty: int, entry_price: float, offset: float) -> float:
+    """Protective stop `offset` dollars on the losing side of an executed entry."""
+    return entry_price - offset if entry_qty > 0 else entry_price + offset
 
 
 class Broker(Protocol):
@@ -236,6 +243,8 @@ class Engine:
             order = next((o for o in reversed(self.orders) if o.id == f.order_id), None)
             if order is not None and order.attached_stop_loss is not None:
                 self.stops[f.symbol] = order.attached_stop_loss
+            elif order is not None and order.attached_stop_offset is not None:
+                self.stops[f.symbol] = child_stop_level(f.qty, f.price, order.attached_stop_offset)
             if f.symbol not in touched:
                 touched.append(f.symbol)
         for sym in touched:
@@ -309,7 +318,8 @@ class Engine:
                 self._cancel_symbol(sym, ("entry",))
                 if qty != 0:
                     self._submit(Order(sym, qty, "stop", t.entry_stop, "entry", t.reason,
-                                       attached_stop_loss=t.stop_loss, created=now))
+                                       attached_stop_loss=t.stop_loss, attached_stop_offset=t.stop_offset,
+                                       created=now))
                 continue
             if price is None:
                 continue
@@ -318,7 +328,8 @@ class Engine:
             if delta != 0 and abs(delta) * price >= r.min_trade_notional:
                 purpose = "entry" if cur == 0 else "rebalance"
                 self._submit(Order(sym, delta, "market", None, purpose, t.reason,
-                                   attached_stop_loss=t.stop_loss if cur == 0 else None, created=now))
+                                   attached_stop_loss=t.stop_loss if cur == 0 else None,
+                                   attached_stop_offset=t.stop_offset if cur == 0 else None, created=now))
             if t.stop_loss is not None:
                 self.stops[sym] = t.stop_loss
                 if cur != 0:

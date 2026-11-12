@@ -89,3 +89,22 @@ def test_end_session_closes_leftover_at_last_price():
     b.process_bar(ts_at(SESSION, 1), {"AAA": bar("AAA", SESSION, 1, 100)})
     f = b.end_session({"AAA": 103.0}, ts_at(SESSION, 389))
     assert f[0].qty == -10 and f[0].ref_price == 103.0 and f[0].note == "eod_forced_at_last_price"
+
+
+def test_offset_stop_is_relative_to_executed_price_after_gap():
+    b = SimBroker(FREE)
+    b.submit(Order("AAA", 10, "stop", 100.0, attached_stop_offset=0.5))
+    # gaps through the entry level: fills at the 101 open, so the stop is 100.5 (not 99.5)
+    f = b.process_bar(ts_at(SESSION, 5), {"AAA": bar("AAA", SESSION, 5, 101.0, 101.5, 100.8, 101.2)})
+    assert len(f) == 1 and f[0].ref_price == 101.0
+    (child,) = b.open_orders()
+    assert child.stop_price == pytest.approx(100.5) and child.qty == -10
+
+
+def test_offset_stop_for_short_uses_slipped_price():
+    b = SimBroker(CostModel(default_slippage_bps=10, symbol_slippage_bps={}, commission_per_share=0,
+                            min_commission=0, sec_fee_rate=0, taf_per_share=0))
+    b.submit(Order("AAA", -10, "stop", 100.0, attached_stop_offset=1.0))
+    f = b.process_bar(ts_at(SESSION, 5), {"AAA": bar("AAA", SESSION, 5, 100.5, 100.6, 99.5, 99.8)})
+    (child,) = b.open_orders()
+    assert child.stop_price == pytest.approx(f[0].price + 1.0) and f[0].price == pytest.approx(99.9)

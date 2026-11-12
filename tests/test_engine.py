@@ -141,3 +141,14 @@ def test_no_fill_after_last_bar_is_closed_at_last_price():
     eng, _, res = run({1: {"AAA": Target(0.5)}}, ev)
     assert eng.fills[-1].note == "eod_forced_at_last_price"
     assert not eng.portfolio.positions
+
+
+def test_engine_tracks_offset_stop_without_duplicating_orders():
+    ov = {10: (100, 101.5, 99.9, 101.2), **{m: (101.2,) * 4 for m in range(11, 40)},
+          40: (101.0, 101.0, 100.0, 100.2), **{m: (100.2,) * 4 for m in range(41, 390)}}
+    ev = flat_day(SESSION, price=100.0, overrides=ov)
+    eng, _, _ = run({1: {"AAA": Target(0.5, entry_stop=101.0, stop_offset=0.5)}}, ev)
+    entry, stop = eng.fills[0], eng.fills[1]
+    assert entry.ref_price == 101.0 and stop.purpose == "stop_loss" and stop.ref_price == pytest.approx(100.5)
+    assert len(eng.fills) == 2
+    assert [o for o in eng.orders if o.purpose == "stop_loss"] == []   # the broker's OTO child was reused

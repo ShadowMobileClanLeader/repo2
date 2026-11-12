@@ -40,6 +40,18 @@ class HistoricalMarketData:
     def _features_by_date(self) -> dict:
         return {d: g for d, g in self.features.groupby("date")}
 
+    @cached_property
+    def _by_symbol(self) -> dict:
+        return {s: g.reset_index(drop=True) for s, g in self.features.groupby("symbol")}
+
+    def daily_history(self, symbol: str, n: int) -> pd.DataFrame:
+        """Last n daily-feature rows for `symbol`, dated strictly before the current session."""
+        g = self._by_symbol.get(symbol)
+        if g is None:
+            return self.features.iloc[0:0]
+        i = int(np.searchsorted(g["date"].to_numpy(), self.session.date, side="left"))
+        return g.iloc[max(0, i - n):i]
+
     def set_session(self, session: Session, prev: dt.date | None) -> None:
         self.session, self.prev_session = session, prev
 

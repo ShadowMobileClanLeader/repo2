@@ -17,7 +17,7 @@ from __future__ import annotations
 import pandas as pd
 
 from .costs import CostModel
-from .engine import Bar, Fill, Order
+from .engine import Bar, Fill, Order, child_stop_level
 
 
 class SimBroker:
@@ -77,9 +77,13 @@ class SimBroker:
                     continue
                 note = "gap_through_stop" if ref == b.open else ""
             del self._open[o.id]
-            fills.append(self._fill(o, ref, ts, note))
-            if o.attached_stop_loss is not None:
-                child = Order(o.symbol, -o.qty, "stop", o.attached_stop_loss, "stop_loss",
+            fill = self._fill(o, ref, ts, note)
+            fills.append(fill)
+            level = o.attached_stop_loss
+            if level is None and o.attached_stop_offset is not None:
+                level = child_stop_level(o.qty, fill.price, o.attached_stop_offset)
+            if level is not None:
+                child = Order(o.symbol, -o.qty, "stop", level, "stop_loss",
                               f"OTO stop for order {o.id}", created=ts)
                 # worst case: if the child level is inside this bar's range, assume it was hit
                 if (o.qty > 0 and b.low <= child.stop_price) or (o.qty < 0 and b.high >= child.stop_price):

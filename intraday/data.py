@@ -90,6 +90,7 @@ def fetch_intraday_day(client: AlpacaClient, spec: IntradaySpec, session: Sessio
     old = pd.read_parquet(pq) if pq.exists() else _empty()
     out = pd.concat([old, new], ignore_index=True) if len(old) else new
     pq.parent.mkdir(parents=True, exist_ok=True)
+    out = out.drop_duplicates(["symbol", "ts"], keep="last")   # safe if a previous run died mid-write
     out.sort_values(["symbol", "ts"]).to_parquet(pq, index=False)
     man.write_text(json.dumps(sorted(have | set(need))))
     return len(new)

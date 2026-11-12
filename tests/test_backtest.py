@@ -36,3 +36,14 @@ def test_spec_bounds_end_before_close():
     assert start.startswith("2024-03-04T14:30") and end.startswith("2024-03-04T20:59:59")
     _, end5 = data.OPEN5.bounds(SESSION)
     assert end5.startswith("2024-03-04T14:34:59")
+
+
+def test_daily_history_excludes_current_session():
+    import datetime as dt
+    feats = pd.DataFrame({"symbol": "SPY", "date": [dt.date(2024, 2, 28), dt.date(2024, 2, 29),
+                                                    dt.date(2024, 3, 1), SESSION.date, dt.date(2024, 3, 5)],
+                          "ret_intraday": [1, 2, 3, 4, 5]})
+    md = HistoricalMarketData(features=feats)
+    md.set_session(SESSION, dt.date(2024, 3, 1))
+    h = md.daily_history("SPY", 2)
+    assert list(h["ret_intraday"]) == [2, 3]

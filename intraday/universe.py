@@ -101,6 +101,8 @@ def compute_daily_features(raw: pd.DataFrame, adj: pd.DataFrame) -> pd.DataFrame
         "ret1": df["close"] / prev_close - 1.0,
         "ret_overnight": df["open"] / prev_close - 1.0,
         "ret_intraday": df["close"] / df["open"] - 1.0,
+        # adjusted/raw close; changes on ex-dividend and split dates (scheduled corporate actions)
+        "adj_ratio": df["close"] / df["close_raw"],
     })
     return out
 
@@ -128,3 +130,21 @@ def liquid_top_n(feat_prev: pd.DataFrame, n: int, min_price: float = 5.0, min_hi
     f = feat_prev[(feat_prev["close"] >= min_price) & (feat_prev["n_hist"] >= min_hist)]
     f = f.dropna(subset=["dollar_vol20"]).sort_values("dollar_vol20", ascending=False)
     return list(f["symbol"].head(n))
+
+
+def monthly_top_n(features: pd.DataFrame, sessions_dates: list[dt.date], n: int = 200) -> dict[dt.date, list[str]]:
+    """Point-in-time liquid universe, reconstituted on the first session of each month using
+    features from the previous session's close. Returns {month_first_session: symbols}."""
+    by_date = {d: g for d, g in features.groupby("date")}
+    out = {}
+    for i in range(1, len(sessions_dates)):
+        d, prev = sessions_dates[i], sessions_dates[i - 1]
+        if (d.year, d.month) != (prev.year, prev.month) and prev in by_date:
+            out[d] = liquid_top_n(by_date[prev], n)
+    return out
+
+
+def universe_on(monthly: dict[dt.date, list[str]], d: dt.date) -> list[str]:
+    """The monthly universe in force on date d."""
+    keys = [k for k in monthly if k <= d]
+    return monthly[max(keys)] if keys else []

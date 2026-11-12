@@ -51,3 +51,24 @@ class ScriptedStrategy:
         self.calls.append(now)
         minute = int((now - ctx.session.open) / pd.Timedelta(minutes=1))  # minutes since open at bar close
         return self.script.get(minute)
+
+
+class FakeMD:
+    """Minimal market-data stand-in: daily feature rows + per-day intraday frames."""
+
+    def __init__(self, daily: "pd.DataFrame", intraday: dict | None = None, session=None):
+        self.daily = daily
+        self.intraday = intraday or {}
+        self.session = session
+
+    def daily_history(self, symbol, n):
+        d = self.daily[(self.daily["symbol"] == symbol) & (self.daily["date"] < self.session.date)]
+        return d.iloc[-n:]
+
+    def previous_session_dates(self, n):
+        return sorted(d for d in self.intraday if d < self.session.date)[-n:]
+
+    def intraday_history(self, spec, days, symbols=None):
+        assert all(d < self.session.date for d in days)
+        frames = [self.intraday[d] for d in days if d in self.intraday]
+        return pd.concat(frames) if frames else pd.DataFrame(columns=["symbol", "ts", "open", "close"])

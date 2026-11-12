@@ -60,7 +60,7 @@ class RateLimiter:
 
 class AlpacaClient:
     def __init__(self, trading_url: str = PAPER_TRADING_URL, data_url: str = DATA_URL,
-                 rate_limiter: RateLimiter | None = None):
+                 rate_limiter: RateLimiter | None = None, timeout: float = 180.0):
         env_url = os.environ.get("APCA_API_BASE_URL")
         if env_url:
             assert_paper_url(env_url)
@@ -71,6 +71,7 @@ class AlpacaClient:
         self._headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
         self._local = threading.local()
         self.limiter = rate_limiter or RateLimiter()
+        self.timeout = timeout
 
     # -- low level ----------------------------------------------------------
     @property
@@ -88,15 +89,17 @@ class AlpacaClient:
             url = self.trading_url + path
         else:
             url = self.data_url + path
-        for attempt in range(6):
+        for attempt in range(8):
             self.limiter.acquire()
             try:
-                r = self._session.request(method, url, timeout=60, **kw)
-            except requests.RequestException:
-                time.sleep(2 ** attempt)
+                r = self._session.request(method, url, timeout=self.timeout, **kw)
+            except requests.RequestException as e:
+                print(f"[alpaca] retry {attempt + 1} {path}: {type(e).__name__}", flush=True)
+                time.sleep(min(60, 2 ** attempt))
                 continue
             if r.status_code == 429 or r.status_code >= 500:
-                time.sleep(2 ** attempt)
+                print(f"[alpaca] retry {attempt + 1} {path}: HTTP {r.status_code}", flush=True)
+                time.sleep(min(60, 2 ** attempt))
                 continue
             if not r.ok:
                 raise requests.HTTPError(f"{r.status_code} {url}: {r.text[:300]}", response=r)
