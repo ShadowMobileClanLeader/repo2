@@ -3,6 +3,7 @@
 Rules as implemented (see research/phase2_strategy_specs.md for sources / ambiguities):
   * move(t)  = |close_t / open_day - 1| for each minute-of-day t
   * sigma(t) = mean of move(t) over the previous `lookback` (14) sessions
+  * prev_close is reduced by the cash dividend on ex-dates (as in the authors' code)
   * upper(t) = max(open_day, prev_close) * (1 + band_mult * sigma(t))
     lower(t) = min(open_day, prev_close) * (1 - band_mult * sigma(t))
   * decisions only at bar closes on the `step` grid (every 30 min from 10:00)
@@ -35,6 +36,7 @@ class NoiseAreaMomentum:
     max_leverage: float = 4.0
     vol_lookback: int = 14
     use_vwap: bool = True
+    adjust_dividends: bool = True     # prev close minus ex-dividend amount (authors' code)
     symbol: str = "SPY"
     spec: data.IntradaySpec = field(default_factory=lambda: data.SPY_1MIN)
     name: str = "noise_area"
@@ -44,7 +46,8 @@ class NoiseAreaMomentum:
         self.vwap = SessionVWAP()
         self.open_px = None
         prev = md.daily_history(self.symbol, max(self.vol_lookback, 1) + 1)
-        self.prev_close = float(prev["close"].iloc[-1]) if len(prev) else np.nan
+        self.dividend = md.ex_dividend(self.symbol) if self.adjust_dividends else 0.0
+        self.prev_close = float(prev["close"].iloc[-1]) - self.dividend if len(prev) else np.nan
         sd = realized_daily_vol(prev["ret1"], self.vol_lookback)
         self.leverage = min(self.max_leverage, self.target_vol / sd) if sd == sd and sd > 0 else 0.0
         self.sigma = self._sigma_profile(md)

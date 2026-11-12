@@ -56,6 +56,17 @@ def main(stages: list[str]) -> None:
         sess = calendar.sessions(IEX_START, HOLDOUT_END)
         data.fetch_intraday(client, IEX_1MIN, {s.date: ["SPY"] for s in sess}, workers=4)
         print(f"spy_iex done ({time.time() - t0:.0f}s)", flush=True)
+    if "orb_tables" in stages:
+        from intraday import orb_data
+        for feed in ("sip", "iex"):
+            t = orb_data.build_table(feed)
+            print(f"open5 table {feed}: {len(t)} rows, {t['date'].nunique()} days", flush=True)
+    if "orb1m" in stages:       # SIP 1-minute bars for each day's top-50 stocks in play (SIP and IEX ranking)
+        need = orb_symbols_by_day(top_n=50)
+        sizes = pd.Series({d: len(s) for d, s in need.items()})
+        print("orb 1m symbols/day: median", int(sizes.median()), "max", int(sizes.max()), flush=True)
+        data.fetch_intraday(client, data.SPY_1MIN, need, batch=25, workers=8)
+        print(f"orb1m done ({time.time() - t0:.0f}s)", flush=True)
     if "xs5" in stages:         # 5-minute bars for the point-in-time top-200 universe
         need = xs_symbols_by_day()
         data.fetch_intraday(client, XS_5MIN, need, batch=100, workers=6)
@@ -73,6 +84,28 @@ def xs_symbols_by_day(n: int = 200) -> dict:
     dates = [s.date for s in calendar.sessions(DATA_START, HOLDOUT_END)]
     monthly = universe.monthly_top_n(feats, dates, n)
     return {d: universe.universe_on(monthly, d) for d in dates if universe.universe_on(monthly, d)}
+
+
+def orb_symbols_by_day(top_n: int = 50) -> dict:
+    """Union over feeds of each day's top_n stocks in play (prior-day filters, relvol >= 1, open > $5)."""
+    from intraday import orb_data
+    feats = pd.read_parquet(universe.FEATURES_FILE, columns=["symbol", "date", "close", "adv14", "atr14"])
+    by_prev = {d: g for d, g in feats.groupby("date")}
+    dates = [s.date for s in calendar.sessions(DATA_START, HOLDOUT_END)]
+    prev_of = {dates[i]: dates[i - 1] for i in range(1, len(dates))}
+    need = defaultdict(set)
+    for feed in ("sip", "iex"):
+        path = orb_data.table_path(feed)
+        if not path.exists():
+            continue
+        for d, day in pd.read_parquet(path).groupby("date"):
+            fp = by_prev.get(prev_of.get(d))
+            if fp is None:
+                continue
+            elig = set(universe.orb_eligible(fp))
+            sel = orb_data.select_stocks_in_play(day[day["symbol"].isin(elig)], top_n)
+            need[d] |= set(sel["symbol"])
+    return {d: sorted(s | {"SPY"}) for d, s in need.items()}
 
 
 def open5_symbols_by_day(lookback: int = 14) -> dict:

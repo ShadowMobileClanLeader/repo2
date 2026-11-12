@@ -47,3 +47,14 @@ def test_daily_history_excludes_current_session():
     md.set_session(SESSION, dt.date(2024, 3, 1))
     h = md.daily_history("SPY", 2)
     assert list(h["ret_intraday"]) == [2, 3]
+
+
+def test_ex_dividend_from_adjustment_ratio():
+    import datetime as dt
+    feats = pd.DataFrame({"symbol": "SPY", "date": [dt.date(2024, 3, 1), SESSION.date, dt.date(2024, 3, 5)],
+                          "close": [500.0, 999.0, 999.0], "adj_ratio": [0.99, 0.99 / (1 - 1.5 / 500), 2.0]})
+    md = HistoricalMarketData(features=feats)
+    md.set_session(SESSION, dt.date(2024, 3, 1))
+    assert md.ex_dividend("SPY") == pytest.approx(1.5)
+    md.set_session(make_session("2024-03-05"), SESSION.date)
+    assert md.ex_dividend("SPY") == 0.0          # ratio jump > 5% (split-like) -> ignored

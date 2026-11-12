@@ -91,3 +91,14 @@ def test_long_trailing_stop_exit(strat):
         b.vwap = 100.5
         out = strat.on_bar(SESSION.open + pd.Timedelta(minutes=m + 1), {"SPY": b}, ctx(pos=100))
     assert out["SPY"].weight == 0.0
+
+
+def test_prev_close_is_dividend_adjusted():
+    days = pd.bdate_range("2024-02-12", "2024-03-01").date[-14:]
+    daily = pd.DataFrame({"symbol": "SPY", "date": pd.bdate_range("2024-02-09", "2024-03-01").date[-15:],
+                          "close": 99.0, "ret1": np.tile([0.01, -0.01], 8)[:15]})
+    md = FakeMD(daily, {d: _history_day(d) for d in days}, SESSION)
+    md.dividend = 1.0
+    s = NoiseAreaMomentum()
+    s.prepare_session(SESSION, md)
+    assert s.prev_close == pytest.approx(98.0)

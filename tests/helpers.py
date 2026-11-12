@@ -65,6 +65,9 @@ class FakeMD:
         d = self.daily[(self.daily["symbol"] == symbol) & (self.daily["date"] < self.session.date)]
         return d.iloc[-n:]
 
+    def ex_dividend(self, symbol):
+        return getattr(self, "dividend", 0.0)
+
     def previous_session_dates(self, n):
         return sorted(d for d in self.intraday if d < self.session.date)[-n:]
 

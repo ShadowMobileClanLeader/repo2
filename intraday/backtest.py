@@ -52,6 +52,71 @@ class HistoricalMarketData:
         i = int(np.searchsorted(g["date"].to_numpy(), self.session.date, side="left"))
         return g.iloc[max(0, i - n):i]
 
+    def ex_dividend(self, symbol: str) -> float:
+        """Cash dividend going ex on the current session (a scheduled, pre-announced corporate
+        action; live trading gets it from Alpaca's corporate-actions API). Derived from the change
+        in adjusted/raw close ratio: D = C_prev * (1 - ratio_prev / ratio_today). Only the ratio of
+        today's row is read, never today's prices. Splits (ratio jumps > 5%) return 0."""
+        g = self._by_symbol.get(symbol)
+        if g is None or "adj_ratio" not in g:
+            return 0.0
+        dates = g["date"].to_numpy()
+        i = int(np.searchsorted(dates, self.session.date, side="left"))
+        if i == 0 or i >= len(g) or dates[i] != self.session.date:
+            return 0.0
+        r_prev, r_now = g["adj_ratio"].iloc[i - 1], g["adj_ratio"].iloc[i]
+        f = r_prev / r_now
+        if not (0.95 < f < 1.0):
+            return 0.0
+        return float(g["close"].iloc[i - 1] * (1 - f))
+
+    # ---- opening-range data (Stocks in Play) ------------------------------------
+    def _open5(self, feed: str) -> dict:
+        cache = self.__dict__.setdefault("_open5_cache", {})
+        if feed not in cache:
+            from .orb_data import table_path
+            t = pd.read_parquet(table_path(feed))
+            cache[feed] = {d: g for d, g in t.groupby("date")}
+        return cache[feed]
+
+    def orb_snapshot(self, feed: str, now: pd.Timestamp, delay_minutes: int = 0) -> pd.DataFrame:
+        """Today's 09:30-09:35 bars + relative volume for symbols that pass the prior-day filters,
+        joined with prior-day ATR. Refuses to answer before the data would exist live:
+        09:35 for real-time feeds, 09:35 + delay for delayed SIP."""
+        available = self.session.open + pd.Timedelta(minutes=5 + delay_minutes)
+        if now < available:
+            raise LookAheadError(f"opening-range data for {feed} not available until {available:%H:%M}, asked at {now:%H:%M}")
+        from .universe import orb_eligible
+        prev = self.daily_features()
+        elig = set(orb_eligible(prev))
+        day = self._open5(feed).get(self.session.date)
+        if day is None:
+            return pd.DataFrame(columns=["symbol", "open", "high", "low", "close", "volume", "relvol", "atr14"])
+        day = day[day["symbol"].isin(elig)]
+        return day.merge(prev[["symbol", "atr14"]], on="symbol", how="left")
+
+    def orb_symbols_to_load(self, feed: str, top_n: int, **kw) -> list[str]:
+        """Data plumbing only: which symbols' 1-minute bars to load for today. The strategy cannot
+        see rankings before orb_snapshot() allows it; this just avoids loading ~1000 symbols."""
+        from .orb_data import select_stocks_in_play
+        snap = self.orb_snapshot(feed, self.session.close, 0)
+        return list(select_stocks_in_play(snap, top_n, **kw)["symbol"])
+
+    @cached_property
+    def _xs_monthly(self) -> dict:
+        from .config import DATA_START, HOLDOUT_END
+        from .universe import monthly_top_n
+        dates = [s.date for s in calendar.sessions(DATA_START, HOLDOUT_END)]
+        return monthly_top_n(self.features, dates, self.xs_n)
+
+    xs_n = 200
+
+    def xs_universe(self) -> list[str]:
+        """Point-in-time top-200 liquid universe in force today (formed at the month start
+        from the previous session's features)."""
+        from .universe import universe_on
+        return universe_on(self._xs_monthly, self.session.date)
+
     def set_session(self, session: Session, prev: dt.date | None) -> None:
         self.session, self.prev_session = session, prev
 
