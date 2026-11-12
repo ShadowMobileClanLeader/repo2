@@ -1,0 +1,34 @@
+{
+ "account": {
+  "status": "ACTIVE",
+  "multiplier": "4",
+  "shorting_enabled": true,
+  "pattern_day_trader": null
+ },
+ "entitlement": {
+  "iex_realtime_last_10min": "allowed",
+  "iex_historical_2024": "allowed",
+  "sip_realtime_last_10min": "denied: 403 https://data.alpaca.markets/v2/stocks/bars: {\"message\":\"subscription does not permit q",
+  "sip_historical_2024": "allowed"
+ },
+ "spy_1min_iex_vs_sip": {
+  "days": 40,
+  "iex_vol_share": 0.01859741161704338,
+  "iex_missing_minutes": 0.00641025641025641,
+  "minute_vol_corr_log": 0.5552010994814511,
+  "close_diff_bps_median": 0.43231223420037157,
+  "vwap_diff_bps_10:00": 0.9714678421962608,
+  "vwap_diff_bps_12:00": 1.2823563495345525,
+  "vwap_diff_bps_15:30": 1.7008218250197382,
+  "vwap_diff_bps_15:30_p95": 7.876569341964387
+ },
+ "orb_relative_volume_iex_vs_sip": {
+  "eval_days": 57,
+  "median_eligible": 1032.0,
+  "spearman_median": 0.5693003269037217,
+  "top20_overlap_median": 0.45,
+  "top20_overlap_min": 0.0,
+  "iex_open5_vol_share_median": 0.01978270453083805,
+  "iex_zero_open_volume_frac_median": 0.1511627906976744
+ }
+}

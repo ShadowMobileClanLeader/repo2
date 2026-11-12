@@ -1,0 +1,6 @@
+250 sessions in 2.8s; max |engine - independent| daily return = 5.49e-06
+(differences come only from whole-share rounding)
+engine, zero cost : {'days': 250, 'cagr': 0.1326, 'vol': 0.1078, 'sharpe': 1.2092, 'sortino': 1.8079, 'max_dd': -0.1071, 'hit_rate': 0.544}
+costs x1: mean daily drag 3.45 bps, sharpe 0.40, fills 500, flatten fill times ['12:54', '15:54']
+costs x2: mean daily drag 6.45 bps, sharpe -0.30, fills 500, flatten fill times ['12:54', '15:54']
+costs x3: mean daily drag 9.45 bps, sharpe -1.00, fills 500, flatten fill times ['12:54', '15:54']
