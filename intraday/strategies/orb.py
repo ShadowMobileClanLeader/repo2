@@ -56,6 +56,10 @@ class ORBStocksInPlay:
         snap = self.md.orb_snapshot(self.selection_feed, now, self.delay_minutes)
         sel = select_stocks_in_play(snap, self.top_n, self.min_relvol, self.min_open)
         sel = sel[sel["atr14"] > 0]
+        # entry levels from RAW opening-range bars of the selection feed (snapshot prices are split-adjusted)
+        lv = self.md.orb_levels(self.selection_feed, list(sel["symbol"]), now, self.delay_minutes)
+        sel = sel.drop(columns=["high", "low"]).join(lv, on="symbol", how="inner")
+        sel = sel.rename(columns={"or_high": "high", "or_low": "low"})
         self.selection = sel
         cap = ctx.sod_equity / self.top_n
         targets = {}

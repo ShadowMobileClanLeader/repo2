@@ -108,3 +108,13 @@ def test_offset_stop_for_short_uses_slipped_price():
     f = b.process_bar(ts_at(SESSION, 5), {"AAA": bar("AAA", SESSION, 5, 100.5, 100.6, 99.5, 99.8)})
     (child,) = b.open_orders()
     assert child.stop_price == pytest.approx(f[0].price + 1.0) and f[0].price == pytest.approx(99.9)
+
+
+def test_same_bar_stop_optimistic_mode_defers_check():
+    b = SimBroker(FREE, same_bar_stop="next_bar")
+    b.submit(Order("AAA", 10, "stop", 100.0, attached_stop_loss=99.0))
+    f = b.process_bar(ts_at(SESSION, 5), {"AAA": bar("AAA", SESSION, 5, 99.5, 100.5, 98.5, 99.0)})
+    assert [x.qty for x in f] == [10]
+    (child,) = b.open_orders()
+    f2 = b.process_bar(ts_at(SESSION, 6), {"AAA": bar("AAA", SESSION, 6, 99.2, 99.3, 98.9, 99.0)})
+    assert f2[0].qty == -10 and f2[0].ref_price == 99.0

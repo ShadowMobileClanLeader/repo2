@@ -21,8 +21,12 @@ python -m scripts.engine_sanity                       # engine vs independent SP
 
 Needs `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` in the environment. The cache (`data/cache/`,
 git-ignored) is lost when a cloud container is reclaimed; rebuild with `scripts/download_data.py`.
-The `open5` stage is slow (~2 h): Alpaca bar-request latency scales with the number of
-symbols (~16 ms/symbol), so downloads parallelise across sessions, not symbols.
+The `open5`/`iex_open5` stages are slow (hours): Alpaca bar-request latency scales with the
+number of symbols (~16 ms/symbol), so downloads parallelise across sessions, not symbols.
+Download gotchas: the 200 req/min limit is per account — when running two download processes
+set `ALPACA_REQ_PER_MIN` so they sum below 200; never SIGSTOP a downloader (its open requests
+keep counting against Alpaca and throttle everything else) — kill and restart it, cached days
+are skipped; a process stuck in long 429 back-offs recovers faster if restarted.
 
 ## Non-negotiable research rules (from the project owner)
 

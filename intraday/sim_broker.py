@@ -21,8 +21,12 @@ from .engine import Bar, Fill, Order, child_stop_level
 
 
 class SimBroker:
-    def __init__(self, costs: CostModel):
+    def __init__(self, costs: CostModel, same_bar_stop: str = "worst"):
+        """same_bar_stop: "worst" = if an OTO child's level is inside the entry bar's range, assume it
+        was hit in that bar; "next_bar" = only check it from the next bar (optimistic bound)."""
+        assert same_bar_stop in ("worst", "next_bar")
         self.costs = costs
+        self.same_bar_stop = same_bar_stop
         self._open: dict[int, Order] = {}
         self._positions: dict[str, int] = {}   # broker's own view, to close leftovers at EOD
 
@@ -86,7 +90,8 @@ class SimBroker:
                 child = Order(o.symbol, -o.qty, "stop", level, "stop_loss",
                               f"OTO stop for order {o.id}", created=ts)
                 # worst case: if the child level is inside this bar's range, assume it was hit
-                if (o.qty > 0 and b.low <= child.stop_price) or (o.qty < 0 and b.high >= child.stop_price):
+                hit = (o.qty > 0 and b.low <= child.stop_price) or (o.qty < 0 and b.high >= child.stop_price)
+                if hit and self.same_bar_stop == "worst":
                     fills.append(self._fill(child, min(child.stop_price, ref) if o.qty > 0 else max(child.stop_price, ref),
                                             ts, "same_bar_stop_assumed"))
                 else:

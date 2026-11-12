@@ -31,6 +31,21 @@ def _snap():
     })
 
 
+def test_raw_open_is_used_for_price_filter():
+    snap = _snap().assign(open_raw=[10.0, 50.0, 20.0, 30.0, 4.0, 40.0])
+    snap.loc[snap.symbol == "UP", "open_raw"] = 4.0          # adjusted open 10, raw open 4 (later reverse split)
+    assert "UP" not in set(select_stocks_in_play(snap, top_n=5)["symbol"])
+
+
+def test_opening_range_from_raw_bars():
+    from intraday.orb_data import opening_range
+    df = pd.DataFrame({"symbol": "A", "ts": pd.date_range("2024-03-04 14:30", periods=5, freq="min", tz="UTC"),
+                       "open": [10, 10.2, 10.1, 10.3, 10.4], "high": [10.3, 10.4, 10.2, 10.6, 10.5],
+                       "low": [9.9, 10.0, 10.0, 10.2, 10.3], "close": [10.2, 10.1, 10.15, 10.4, 10.45]})
+    r = opening_range(df).loc["A"]
+    assert (r.or_open, r.or_high, r.or_low, r.or_close) == (10, 10.6, 9.9, 10.45)
+
+
 def test_selection_filters_and_ranks():
     sel = select_stocks_in_play(_snap(), top_n=2)
     assert list(sel["symbol"]) == ["UP", "DN"]                # DOJI, LOWRV (<100%), CHEAP (<$5) excluded
@@ -48,6 +63,11 @@ class _MD:
     def orb_snapshot(self, feed, now, delay):
         self.asked.append(now)
         return _snap()
+
+    def orb_levels(self, feed, symbols, now, delay):
+        sn = _snap().set_index("symbol")
+        return pd.DataFrame({"or_open": sn["open"], "or_high": sn["high"], "or_low": sn["low"],
+                             "or_close": sn["close"]}).loc[symbols]
 
 
 def _ctx():

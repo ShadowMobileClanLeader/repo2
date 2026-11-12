@@ -70,7 +70,8 @@ class AlpacaClient:
         key, secret = _keys_from_env()
         self._headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
         self._local = threading.local()
-        self.limiter = rate_limiter or RateLimiter()
+        # Alpaca's 200 req/min limit is per ACCOUNT: give each concurrent process its share
+        self.limiter = rate_limiter or RateLimiter(int(os.environ.get("ALPACA_REQ_PER_MIN", "190")))
         self.timeout = timeout
 
     # -- low level ----------------------------------------------------------

@@ -95,6 +95,19 @@ class HistoricalMarketData:
         day = day[day["symbol"].isin(elig)]
         return day.merge(prev[["symbol", "atr14"]], on="symbol", how="left")
 
+    def orb_levels(self, feed: str, symbols: list[str], now: pd.Timestamp, delay_minutes: int = 0) -> pd.DataFrame:
+        """Opening range (09:30-09:35) from RAW 1-minute bars of `feed`, per symbol. Same
+        availability guard as orb_snapshot (live: fetched from Alpaca at decision time)."""
+        available = self.session.open + pd.Timedelta(minutes=5 + delay_minutes)
+        if now < available:
+            raise LookAheadError(f"opening range not available until {available:%H:%M}")
+        from .orb_data import IEX_OPEN_1MIN, opening_range
+        spec = data.SPY_1MIN if feed == "sip" else IEX_OPEN_1MIN
+        df = data.load_intraday(spec, self.session.date, symbols)
+        o = self.session.open.tz_convert("UTC")
+        df = df[(df["ts"] >= o) & (df["ts"] < o + pd.Timedelta(minutes=5))]
+        return opening_range(df) if len(df) else pd.DataFrame(columns=["or_open", "or_high", "or_low", "or_close"])
+
     def orb_symbols_to_load(self, feed: str, top_n: int, **kw) -> list[str]:
         """Data plumbing only: which symbols' 1-minute bars to load for today. The strategy cannot
         see rankings before orb_snapshot() allows it; this just avoids loading ~1000 symbols."""
@@ -173,10 +186,10 @@ class BacktestResult:
 def run_backtest(strategy: Strategy, start: dt.date, end: dt.date, spec: data.IntradaySpec,
                  costs: CostModel = CostModel(), capital: float = 100_000.0,
                  risk: RiskLimits = RiskLimits(), md: HistoricalMarketData | None = None,
-                 bar_minutes: int = 1) -> BacktestResult:
+                 bar_minutes: int = 1, same_bar_stop: str = "worst") -> BacktestResult:
     check_range(start, end)
     md = md or HistoricalMarketData()
-    engine = Engine(strategy, SimBroker(costs), capital, risk, bar_minutes)
+    engine = Engine(strategy, SimBroker(costs, same_bar_stop), capital, risk, bar_minutes)
     rows = []
     allsess = calendar.sessions(start - dt.timedelta(days=10), end)
     for i, s in enumerate(allsess):

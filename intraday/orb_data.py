@@ -27,6 +27,16 @@ def open5_spec(feed: str) -> data.IntradaySpec:
     return data.IntradaySpec(feed, "5Min", "split", "open5")
 
 
+IEX_OPEN_1MIN = data.IntradaySpec("iex", "1Min", "raw", "open5")   # raw IEX bars 09:30-09:35 (levels)
+
+
+def opening_range(bars: pd.DataFrame) -> pd.DataFrame:
+    """Raw 1-minute bars from the first 5 minutes -> per-symbol OR open/high/low/close."""
+    b = bars.sort_values(["symbol", "ts"])
+    return b.groupby("symbol").agg(or_open=("open", "first"), or_high=("high", "max"),
+                                   or_low=("low", "min"), or_close=("close", "last"))
+
+
 def compute_relvol(vol: pd.DataFrame, lookback: int = LOOKBACK) -> pd.DataFrame:
     """vol: dates x symbols opening volume (NaN = not requested). Returns trailing average of the
     PREVIOUS `lookback` days (all must be present) and today's relative volume."""
@@ -57,6 +67,12 @@ def build_table(feed: str) -> pd.DataFrame:
     piv = bars.pivot_table(index="date", columns="symbol", values="volume", aggfunc="sum")
     vol.update(piv)
     avg, rel = compute_relvol(vol)
+    # Raw (unadjusted) official open of the day, for the $5 filter. The open5 bars are
+    # split-adjusted (so volumes compare across splits) and must not be used as price levels.
+    raw = data.load_daily("raw", DATA_START, HOLDOUT_END, guard=False)[["symbol", "date", "open"]]
+    raw = raw.rename(columns={"open": "open_raw"})
+    raw["symbol"] = raw["symbol"].astype(str)
+    bars = bars.merge(raw, on=["date", "symbol"], how="left")
     out = bars.merge(
         pd.DataFrame({"avg14": avg.stack(), "relvol": rel.stack()}).rename_axis(["date", "symbol"]).reset_index(),
         on=["date", "symbol"], how="left")
@@ -67,8 +83,11 @@ def build_table(feed: str) -> pd.DataFrame:
 def select_stocks_in_play(snap: pd.DataFrame, top_n: int = 20, min_relvol: float = 1.0,
                           min_open: float = 5.0) -> pd.DataFrame:
     """snap: today's opening bars with relvol, already restricted to prior-day-eligible symbols.
-    Returns the top_n by relative volume with a direction (+1 bullish candle, -1 bearish, doji dropped)."""
-    s = snap[(snap["relvol"] >= min_relvol) & (snap["open"] > min_open)].copy()
+    Returns the top_n by relative volume with a direction (+1 bullish candle, -1 bearish, doji dropped).
+    Price LEVELS in `snap` are split-adjusted; take entry levels from raw intraday bars instead."""
+    px = snap["open_raw"] if "open_raw" in snap else snap["open"]
+    s = snap[(snap["relvol"] >= min_relvol) & (px > min_open)].copy()
+    # direction from the (split-adjusted) candle: adjustment is a constant factor, so the sign is exact
     s["direction"] = np.sign(s["close"] - s["open"])
     s = s[s["direction"] != 0]
     return s.sort_values(["relvol", "symbol"], ascending=[False, True]).head(top_n)
