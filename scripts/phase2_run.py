@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -47,6 +48,7 @@ class Variant:
     bar_minutes: int = 1
     vwap_filter: bool = False
     features: str = "spy"          # "spy" (SPY rows only) or "all"
+    same_bar_stop: str = "worst"   # fill-model bound for stops inside the entry bar
     risk: RiskLimits = field(default_factory=RiskLimits)
 
 
@@ -68,6 +70,11 @@ def variants() -> dict[str, list[Variant]]:
                     features="all"),
             Variant("orb", "sip+vwap_filter", {"selection_feed": "sip"}, data.SPY_1MIN, ORB_COSTS,
                     features="all", vwap_filter=True),
+            # optimistic fill bound: a stop inside the entry bar is only checked from the next bar
+            Variant("orb", "sip_nextbar_fill", {"selection_feed": "sip"}, data.SPY_1MIN, ORB_COSTS,
+                    features="all", same_bar_stop="next_bar"),
+            Variant("orb", "iex_nextbar_fill", {"selection_feed": "iex", "name": "orb_iex"}, data.SPY_1MIN,
+                    ORB_COSTS, start=iex_ok, features="all", same_bar_stop="next_bar"),
         ],
         "xs": [Variant("xs", sig, {"signal": sig, "name": f"xs_{sig}"}, XS_5MIN, XS_COSTS, bar_minutes=5,
                        features="all")
@@ -101,12 +108,15 @@ def run_one(args) -> dict:
     md = HistoricalMarketData(features=feats)
     t = time.time()
     res = run_backtest(make_strategy(v), v.start, DEV_END, v.spec, costs=v.costs.stressed(mult),
-                       capital=100_000.0, risk=v.risk, md=md, bar_minutes=v.bar_minutes)
+                       capital=100_000.0, risk=v.risk, md=md, bar_minutes=v.bar_minutes,
+                       same_bar_stop=v.same_bar_stop)
     r = res.returns
     spy = spy_returns()
     costs_label = f"x{mult}"
     params = {**{k: (str(x) if isinstance(x, data.IntradaySpec) else x) for k, x in v.params.items()},
               "variant": v.label, "vwap_filter": v.vwap_filter}
+    if v.same_bar_stop != "worst":
+        params["same_bar_stop"] = v.same_bar_stop
     extra = {"trades": int((res.fills["purpose"] == "entry").sum()) if len(res.fills) else 0,
              "avg_gross": float((res.daily["max_gross"] / res.daily["sod_equity"]).mean()),
              "cost_drag_bps_day": float(((res.daily["fees"] + res.daily["slippage"]) / res.daily["sod_equity"]).mean() * 1e4),
@@ -135,7 +145,7 @@ def main(names: list[str]) -> None:
         strat, _, labels = n.partition(":")
         wanted = set(labels.split(",")) if labels else None
         jobs += [(v, m) for v in allv[strat] if wanted is None or v.label in wanted for m in (1, 2, 3)]
-    with ProcessPoolExecutor(max_workers=3) as ex:
+    with ProcessPoolExecutor(max_workers=int(os.environ.get("P2_WORKERS", "3"))) as ex:
         rows = list(ex.map(run_one, jobs))
     df = pd.DataFrame(rows)
     pd.set_option("display.width", 200)
