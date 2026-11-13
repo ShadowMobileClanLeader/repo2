@@ -33,6 +33,12 @@ WARNINGS = """> **Read before trusting these numbers**
 > - Paper results will therefore **overstate** real performance."""
 
 
+def sip_end(ts: pd.Timestamp) -> str:
+    """The free plan only serves SIP data older than 15 minutes: cap query ends accordingly."""
+    cap = pd.Timestamp.now(tz=UTC) - pd.Timedelta(minutes=16)
+    return min(ts.tz_convert(UTC) if ts.tzinfo else ts.tz_localize(UTC), cap).isoformat()
+
+
 def load_events(day: str) -> list[dict]:
     p = LIVE / day / "events.jsonl"
     return [json.loads(x) for x in p.read_text().splitlines() if x.strip()] if p.exists() else []
@@ -44,7 +50,7 @@ def fill_comparison(client: AlpacaClient, ev: list[dict], day: str) -> pd.DataFr
     if not fills:
         return pd.DataFrame()
     s = pd.Timestamp(f"{day} 09:30", tz=ET).tz_convert(UTC)
-    sip = client.bars(["SPY"], "1Min", s.isoformat(), (s + pd.Timedelta(hours=6, minutes=30)).isoformat(), "sip", "raw")
+    sip = client.bars(["SPY"], "1Min", s.isoformat(), sip_end(s + pd.Timedelta(hours=6, minutes=30)), "sip", "raw")
     sip = sip.set_index("ts")
     per_share = P2R.SPY_COSTS.symbol_slippage_per_share.get("SPY", 0.0)
     rows = []
@@ -104,7 +110,9 @@ def main(day: str | None = None):
     live["port"] = live["ret"].astype(float) * summ["scale"]
     eq = (1 + live["port"]).cumprod()
     dd_now, dd_max = float(eq.iloc[-1] / eq.max() - 1), float((eq / eq.cummax() - 1).min())
-    spy = client.bars(["SPY"], "1Day", live["date"].min(), day, "sip", "all")
+    first = pd.Timestamp(live["date"].min()) - pd.Timedelta(days=7)          # include the prior close
+    spy = client.bars(["SPY"], "1Day", first.date().isoformat(),
+                      sip_end(pd.Timestamp(f"{day} 23:59", tz=ET)), "sip", "all")
     spy["date"] = spy["ts"].dt.tz_convert("America/New_York").dt.date.astype(str)
     spy_r = spy.set_index("date")["close"].pct_change()
     lr = live.set_index("date")["port"]

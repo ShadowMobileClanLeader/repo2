@@ -1,0 +1,16 @@
+{
+ "date": "2026-11-13",
+ "label": "FORWARD TEST ONLY - strategy failed the one-shot holdout (research/phase4_report.md)",
+ "base_capital": 100000.0,
+ "scale": 0.30012790797893757,
+ "sleeve_capital": 30012.79079789376,
+ "sleeve_pnl": 0.0,
+ "sleeve_return": 0.0,
+ "portfolio_return": 0.0,
+ "fees": 0.0,
+ "fills": 0,
+ "max_gross": 0.0,
+ "halted": "runner stopped manually at 15:36 ET by owner request (flat, no orders)",
+ "started_mid_session": true,
+ "decisions_live": 5
+}
