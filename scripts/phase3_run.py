@@ -11,6 +11,7 @@ Every scenario is also run on the 2x and 3x cost sleeves.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -62,8 +63,32 @@ def eligible(cost_x1: pd.DataFrame, cost_x2: pd.DataFrame) -> list[str]:
     return [s for s in base if metrics.sharpe(cost_x1[s].dropna()) > 0 and metrics.sharpe(cost_x2[s].dropna()) >= 0]
 
 
-def evaluate(R: pd.DataFrame, spy: pd.Series) -> dict:
-    res = run_portfolio(R, CFG)
+def kill_episodes(r: pd.Series, threshold: float) -> list[dict]:
+    """Drawdown episodes that would trip the kill switch (re-armed after a new equity high)."""
+    eq = (1 + r).cumprod()
+    peak = eq.cummax()
+    dd = eq / peak - 1
+    out, armed = [], True
+    for d, v in dd.items():
+        if armed and v < -threshold:
+            out.append({"tripped": str(d), "peak_date": str(eq[:d].idxmax())})
+            armed = False
+        if not armed and v == 0:
+            out[-1]["recovered"] = str(d)
+            armed = True
+    return out
+
+
+def common_start(R: pd.DataFrame):
+    return max(R[c].first_valid_index() for c in R.columns)
+
+
+def evaluate(R: pd.DataFrame, spy: pd.Series, cfg: PortfolioConfig = None) -> dict:
+    """Performance with the kill switch disarmed (so the whole history is measured); the episodes
+    where it WOULD have fired are listed separately."""
+    cfg = cfg or CFG
+    R = R[R.index >= common_start(R)]
+    res = run_portfolio(R, replace(cfg, kill_drawdown=float("inf")))
     r = res.returns
     first = res.scale[res.scale > 0].index.min()
     r = r[r.index >= first] if first is not None else r
@@ -71,7 +96,7 @@ def evaluate(R: pd.DataFrame, spy: pd.Series) -> dict:
     bh = metrics.summary(spy[(spy.index >= r.index.min()) & (spy.index <= r.index.max())])
     gross_used = sum(res.allocations[c] * CFG.sleeve_max_gross.get(c, 1.0) for c in R.columns)
     return {"start": str(r.index.min()), "end": str(r.index.max()), **{k: round(v, 4) for k, v in s.items()},
-            "killed_on": str(res.killed_on) if res.killed_on is not None else None,
+            "kill_switch_episodes": kill_episodes(r, cfg.kill_drawdown),
             "days_loss_gt_limit": int((r < -CFG.daily_loss_limit).sum()),
             "avg_scale": round(float(res.scale[res.scale > 0].mean()), 3),
             "max_worstcase_gross": round(float(gross_used.max()), 3),
@@ -96,8 +121,20 @@ def main():
             out["scenarios"][sc] = {"note": "no sleeve passes the eligibility rule"}
             continue
         out["scenarios"][sc] = {c: evaluate(R[c][cols], spy) for c in ("x1", "x2", "x3")}
-        contrib = contributions(R["x1"][cols], CFG, spy)
+        Rc = R["x1"][cols]
+        contrib = contributions(Rc[Rc.index >= common_start(Rc)], replace(CFG, kill_drawdown=float("inf")), spy)
         out["scenarios"][sc]["contributions_x1"] = contrib.round(4).to_dict("index")
+    # risk-level sensitivity (reported, not selected): portfolio vol target vs drawdown
+    sens = {}
+    for sc, cols in scenarios.items():
+        if not cols:
+            continue
+        sens[sc] = {}
+        for tv in (0.05, 0.075, 0.10, 0.125):
+            e = evaluate(R["x1"][cols], spy, replace(CFG, target_vol=tv))
+            sens[sc][tv] = {k: e[k] for k in ("cagr", "vol", "sharpe", "max_dd")}
+            sens[sc][tv]["kill_trips"] = len(e["kill_switch_episodes"])
+    out["vol_target_sensitivity_x1"] = sens
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "phase3_results.json").write_text(json.dumps(out, indent=1, default=str))
 
@@ -109,10 +146,17 @@ def main():
             print(sc, v)
             continue
         print(f"\n== {sc} ({', '.join(scenarios[sc])})")
-        print(pd.DataFrame({c: {k: v[c][k] for k in ("start", "cagr", "vol", "sharpe", "sortino", "max_dd", "beta",
-                                                      "alpha_ann", "killed_on", "days_loss_gt_limit", "avg_scale")}
+        print(pd.DataFrame({c: {**{k: v[c][k] for k in ("start", "cagr", "vol", "sharpe", "sortino", "max_dd", "beta",
+                                                         "alpha_ann", "days_loss_gt_limit", "avg_scale")},
+                                "kill_trips": len(v[c]["kill_switch_episodes"]),
+                                "spy_bh_sharpe": v[c]["spy_buy_hold_same_window"]["sharpe"],
+                                "spy_bh_max_dd": v[c]["spy_buy_hold_same_window"]["max_dd"]}
                             for c in ("x1", "x2", "x3")}).to_string())
+        print("  kill-switch episodes (x1):", v["x1"]["kill_switch_episodes"])
         print(pd.DataFrame(v["contributions_x1"]).T.round(3).to_string())
+    print("\n== vol-target sensitivity (x1 costs)")
+    for sc, d in sens.items():
+        print(sc, pd.DataFrame(d).T.round(3).to_string(), sep="\n")
 
 
 if __name__ == "__main__":
