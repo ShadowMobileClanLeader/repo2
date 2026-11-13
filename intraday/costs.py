@@ -7,6 +7,8 @@ configurable; use `stressed(2)` / `stressed(3)` for slippage stress tests.
 from __future__ import annotations
 
 import math
+
+import numpy as np
 from dataclasses import dataclass, field, replace
 from typing import Mapping
 
@@ -16,6 +18,10 @@ class CostModel:
     default_slippage_bps: float = 5.0            # single stocks
     symbol_slippage_bps: Mapping[str, float] = field(
         default_factory=lambda: {"SPY": 1.5, "QQQ": 1.5, "IWM": 2.0})
+    symbol_slippage_per_share: Mapping[str, float] = field(default_factory=dict)  # $/share, overrides bps
+    # time-of-day profile for the default (non-symbol-specific) slippage: ((minutes after 09:30, bps), ...)
+    # linearly interpolated, flat outside the first/last point. Built from measured quoted half-spreads.
+    tod_profile: tuple = ()
     slippage_multiplier: float = 1.0              # 2.0 / 3.0 for stress runs
     commission_per_share: float = 0.0035
     min_commission: float = 0.35                  # per order
@@ -24,13 +30,25 @@ class CostModel:
     taf_per_share: float = 0.000166               # FINRA TAF on sells
     taf_max: float = 8.30
 
-    def slippage_bps(self, symbol: str) -> float:
-        return self.symbol_slippage_bps.get(symbol, self.default_slippage_bps) * self.slippage_multiplier
+    def slippage_bps(self, symbol: str, ts=None) -> float:
+        if symbol in self.symbol_slippage_bps:
+            base = self.symbol_slippage_bps[symbol]
+        elif self.tod_profile and ts is not None:
+            et = ts.tz_convert("America/New_York")
+            m = (et.hour * 60 + et.minute) - (9 * 60 + 30)
+            xs, ys = zip(*self.tod_profile)
+            base = float(np.interp(m, xs, ys))
+        else:
+            base = self.default_slippage_bps
+        return base * self.slippage_multiplier
 
-    def fill_price(self, symbol: str, ref_price: float, qty: float) -> float:
+    def fill_price(self, symbol: str, ref_price: float, qty: float, ts=None) -> float:
         """Adverse slippage: buys pay up, sells receive less."""
         side = 1.0 if qty > 0 else -1.0
-        return ref_price * (1.0 + side * self.slippage_bps(symbol) / 1e4)
+        per_share = self.symbol_slippage_per_share.get(symbol)
+        if per_share is not None:
+            return ref_price + side * per_share * self.slippage_multiplier
+        return ref_price * (1.0 + side * self.slippage_bps(symbol, ts) / 1e4)
 
     def fees(self, qty: float, price: float) -> float:
         """Commission + regulatory fees in $ for one fill (qty signed, + buy / - sell)."""

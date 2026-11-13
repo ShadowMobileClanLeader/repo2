@@ -186,7 +186,11 @@ class BacktestResult:
 def run_backtest(strategy: Strategy, start: dt.date, end: dt.date, spec: data.IntradaySpec,
                  costs: CostModel = CostModel(), capital: float = 100_000.0,
                  risk: RiskLimits = RiskLimits(), md: HistoricalMarketData | None = None,
-                 bar_minutes: int = 1, same_bar_stop: str = "worst") -> BacktestResult:
+                 bar_minutes: int = 1, same_bar_stop: str = "worst",
+                 reset_capital_daily: bool = False) -> BacktestResult:
+    """reset_capital_daily: start every session with `capital` (no compounding). Exact for
+    flat-overnight strategies and the right input for portfolio construction, where the
+    portfolio re-allocates capital to each sleeve every day."""
     check_range(start, end)
     md = md or HistoricalMarketData()
     engine = Engine(strategy, SimBroker(costs, same_bar_stop), capital, risk, bar_minutes)
@@ -196,6 +200,8 @@ def run_backtest(strategy: Strategy, start: dt.date, end: dt.date, spec: data.In
         if s.date < start:
             continue
         md.set_session(s, allsess[i - 1].date if i > 0 else None)
+        if reset_capital_daily:
+            engine.portfolio.cash = capital
         symbols = strategy.prepare_session(s, md)
         df = session_bars(data.load_intraday(spec, s.date, symbols), s) if symbols else data._empty()
         r = engine.run_session(s, bar_events(df))

@@ -41,3 +41,24 @@ def test_regulatory_fees_only_on_sells():
 
 def test_zero_qty_has_no_cost():
     assert CostModel().fees(0, 100.0) == 0.0
+
+
+def test_per_share_slippage_overrides_bps_and_stresses():
+    c = CostModel(symbol_slippage_bps={"SPY": 1.5}, symbol_slippage_per_share={"SPY": 0.005})
+    assert c.fill_price("SPY", 400.0, +10) == pytest.approx(400.005)
+    assert c.fill_price("SPY", 400.0, -10) == pytest.approx(399.995)
+    assert c.stressed(3).fill_price("SPY", 400.0, +10) == pytest.approx(400.015)
+    assert c.fill_price("XYZ", 100.0, +1) == pytest.approx(100.05)
+
+
+def test_time_of_day_profile_interpolates():
+    import pandas as pd
+    c = CostModel(symbol_slippage_bps={}, tod_profile=((5, 15.0), (30, 8.0), (384, 2.0)))
+    t = lambda hhmm: pd.Timestamp(f"2024-03-04 {hhmm}").tz_localize("America/New_York").tz_convert("UTC")
+    assert c.slippage_bps("X", t("09:35")) == pytest.approx(15.0)
+    assert c.slippage_bps("X", t("09:31")) == pytest.approx(15.0)             # flat before first point
+    assert c.slippage_bps("X", t("09:47:30")) == pytest.approx(15 - 7 * (12 / 25), abs=0.3)
+    assert c.slippage_bps("X", t("15:54")) == pytest.approx(2.0)
+    assert c.stressed(2).slippage_bps("X", t("15:54")) == pytest.approx(4.0)
+    assert c.slippage_bps("X") == pytest.approx(5.0)                          # no timestamp -> default
+    assert c.fill_price("X", 100.0, 1, t("09:35")) == pytest.approx(100.15)

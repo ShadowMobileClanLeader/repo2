@@ -36,6 +36,30 @@ SPY_COSTS = CostModel()                                    # SPY 1.5 bps
 ORB_COSTS = CostModel(default_slippage_bps=10.0)           # stocks in play: 10 bps (agreed)
 XS_COSTS = CostModel(default_slippage_bps=5.0)             # liquid large caps: 5 bps
 
+# COST_PROFILE=measured: slippage = mean quoted half-spread measured from SIP quotes at the times
+# each strategy trades (research/phase3/measured_costs.json); commissions/fees unchanged.
+COST_PROFILE = os.environ.get("COST_PROFILE", "agreed")
+if COST_PROFILE == "measured":
+    _m = json.loads((ROOT / "research" / "phase3" / "measured_costs.json").read_text())
+
+    def _profile(cat: str) -> tuple:
+        pts = []
+        for hhmm, bps in _m[cat]["by_time_mean_bps"].items():
+            h, mm = map(int, hhmm.split(":"))
+            pts.append((h * 60 + mm - (9 * 60 + 30), bps))
+        return tuple(sorted(pts))
+
+    def _measured(cat: str) -> CostModel:
+        return CostModel(default_slippage_bps=_m[cat]["half_spread_bps_mean"], symbol_slippage_bps={},
+                         tod_profile=_profile(cat))
+
+    SPY_COSTS = CostModel(symbol_slippage_bps={}, symbol_slippage_per_share={"SPY": _m["spy"]["half_spread_usd_mean"]})
+    XS_COSTS = _measured("xs_top200")
+    ORB_COSTS = _measured("orb_sip")
+    ORB_IEX_COSTS = _measured("orb_iex")
+else:
+    ORB_IEX_COSTS = ORB_COSTS
+
 
 @dataclass
 class Variant:
@@ -64,7 +88,7 @@ def variants() -> dict[str, list[Variant]]:
         "vwap_mr": [Variant("vwap_mr", "k0.5", {"k": 0.5}, data.SPY_1MIN, SPY_COSTS)],
         "orb": [
             Variant("orb", "sip", {"selection_feed": "sip"}, data.SPY_1MIN, ORB_COSTS, features="all"),
-            Variant("orb", "iex", {"selection_feed": "iex", "name": "orb_iex"}, data.SPY_1MIN, ORB_COSTS,
+            Variant("orb", "iex", {"selection_feed": "iex", "name": "orb_iex"}, data.SPY_1MIN, ORB_IEX_COSTS,
                     start=iex_ok, features="all"),
             Variant("orb", "sip_delay15", {"delay_minutes": 15, "name": "orb_sip_0950"}, data.SPY_1MIN, ORB_COSTS,
                     features="all"),
@@ -74,7 +98,7 @@ def variants() -> dict[str, list[Variant]]:
             Variant("orb", "sip_nextbar_fill", {"selection_feed": "sip"}, data.SPY_1MIN, ORB_COSTS,
                     features="all", same_bar_stop="next_bar"),
             Variant("orb", "iex_nextbar_fill", {"selection_feed": "iex", "name": "orb_iex"}, data.SPY_1MIN,
-                    ORB_COSTS, start=iex_ok, features="all", same_bar_stop="next_bar"),
+                    ORB_IEX_COSTS, start=iex_ok, features="all", same_bar_stop="next_bar"),
         ],
         "xs": [Variant("xs", sig, {"signal": sig, "name": f"xs_{sig}"}, XS_5MIN, XS_COSTS, bar_minutes=5,
                        features="all")
@@ -101,18 +125,29 @@ def spy_returns() -> pd.Series:
     return f.set_index("date")["ret1"]
 
 
+def _stem(v: "Variant", mult: int) -> str:
+    costs_label = f"x{mult}" if COST_PROFILE == "agreed" else f"{COST_PROFILE}_x{mult}"
+    return f"{v.strategy}__{v.label}__{costs_label}".replace("+", "_")
+
+
 def run_one(args) -> dict:
     v, mult = args
+    done = OUT / f"{_stem(v, mult)}__summary.json"
+    if os.environ.get("P2_SKIP_DONE") and done.exists():
+        j = json.loads(done.read_text())
+        return {"strategy": v.strategy, "variant": v.label, "costs": j["costs"],
+                **{k: j[k] for k in ("sharpe", "sortino", "max_dd", "cagr", "beta", "alpha_ann", "trades",
+                                      "avg_gross", "cost_drag_bps_day", "runtime_s")}}
     feats = pd.read_parquet(FEATURES_FILE, filters=[("symbol", "==", "SPY")]) if v.features == "spy" \
         else pd.read_parquet(FEATURES_FILE)
     md = HistoricalMarketData(features=feats)
     t = time.time()
     res = run_backtest(make_strategy(v), v.start, DEV_END, v.spec, costs=v.costs.stressed(mult),
                        capital=100_000.0, risk=v.risk, md=md, bar_minutes=v.bar_minutes,
-                       same_bar_stop=v.same_bar_stop)
+                       same_bar_stop=v.same_bar_stop, reset_capital_daily=(COST_PROFILE != "agreed"))
     r = res.returns
     spy = spy_returns()
-    costs_label = f"x{mult}"
+    costs_label = f"x{mult}" if COST_PROFILE == "agreed" else f"{COST_PROFILE}_x{mult}"
     params = {**{k: (str(x) if isinstance(x, data.IntradaySpec) else x) for k, x in v.params.items()},
               "variant": v.label, "vwap_filter": v.vwap_filter}
     if v.same_bar_stop != "worst":

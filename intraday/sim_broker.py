@@ -41,7 +41,7 @@ class SimBroker:
 
     # --------------------------------------------------------------------------
     def _fill(self, o: Order, ref: float, ts: pd.Timestamp, note: str = "") -> Fill:
-        px = self.costs.fill_price(o.symbol, ref, o.qty)
+        px = self.costs.fill_price(o.symbol, ref, o.qty, ts)
         f = Fill(o.id, o.symbol, o.qty, px, ref, self.costs.fees(o.qty, px), ts, o.purpose, o.reason, note)
         self._positions[o.symbol] = self._positions.get(o.symbol, 0) + o.qty
         if self._positions[o.symbol] == 0:

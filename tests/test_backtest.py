@@ -58,3 +58,41 @@ def test_ex_dividend_from_adjustment_ratio():
     assert md.ex_dividend("SPY") == pytest.approx(1.5)
     md.set_session(make_session("2024-03-05"), SESSION.date)
     assert md.ex_dividend("SPY") == 0.0          # ratio jump > 5% (split-like) -> ignored
+
+
+def test_reset_capital_daily(monkeypatch):
+    import datetime as dt
+    from intraday import backtest as bt
+    from intraday.calendar import make_session
+    from intraday.costs import CostModel
+    from intraday.engine import Target
+    from helpers import flat_day
+    days = [make_session("2024-03-04"), make_session("2024-03-05")]
+    monkeypatch.setattr(bt.calendar, "sessions", lambda a, b: days)
+
+    def fake_load(spec, d, symbols=None):
+        s = days[0] if d == days[0].date else days[1]
+        ev = flat_day(s, price=100.0, overrides={m: (110.0,) * 4 for m in range(100, 390)})
+        rows = [{"symbol": "AAA", "ts": t, "open": b["AAA"].open, "high": b["AAA"].high, "low": b["AAA"].low,
+                 "close": b["AAA"].close, "volume": 1.0, "vwap": b["AAA"].close} for t, b in ev]
+        return pd.DataFrame(rows)
+    monkeypatch.setattr(bt.data, "load_intraday", fake_load)
+
+    class Long:
+        name = "long"
+        def prepare_session(self, s, md):
+            self.done = False
+            return ["AAA"]
+        def on_bar(self, now, bars, ctx):
+            if not self.done:
+                self.done = True
+                return {"AAA": Target(1.0)}
+
+    free = CostModel(default_slippage_bps=0, symbol_slippage_bps={}, commission_per_share=0, min_commission=0,
+                     sec_fee_rate=0, taf_per_share=0)
+    md = HistoricalMarketData(features=pd.DataFrame({"date": [], "symbol": []}))
+    r = bt.run_backtest(Long(), days[0].date, days[1].date, data.SPY_1MIN, costs=free, md=md, reset_capital_daily=True)
+    assert list(r.daily["sod_equity"]) == [100_000.0, 100_000.0]
+    assert r.returns.iloc[0] == pytest.approx(r.returns.iloc[1])
+    r2 = bt.run_backtest(Long(), days[0].date, days[1].date, data.SPY_1MIN, costs=free, md=md)
+    assert r2.daily["sod_equity"].iloc[1] == pytest.approx(110_000.0)
