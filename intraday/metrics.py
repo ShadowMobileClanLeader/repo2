@@ -49,3 +49,40 @@ def summary(r: pd.Series, mkt: pd.Series | None = None) -> dict:
     if mkt is not None:
         out["beta"], out["alpha_ann"] = beta_alpha(r, mkt)
     return out
+
+
+# --------------------------------------------------------------- multiple-testing adjustment
+EULER_GAMMA = 0.5772156649015329
+
+
+def probabilistic_sharpe(r: pd.Series, sr_benchmark: float = 0.0) -> float:
+    """PSR (Bailey & Lopez de Prado 2012): P(true per-period Sharpe > sr_benchmark), allowing for
+    skewness and fat tails. Both Sharpes are PER PERIOD (daily), not annualised."""
+    from scipy.stats import kurtosis, norm, skew
+    r = r.dropna()
+    t = len(r)
+    sd = r.std(ddof=1)
+    if t < 3 or sd == 0:
+        return float("nan")
+    sr = r.mean() / sd
+    g3, g4 = skew(r), kurtosis(r, fisher=False)
+    denom = np.sqrt(max(1e-12, 1 - g3 * sr + (g4 - 1) / 4 * sr ** 2))
+    return float(norm.cdf((sr - sr_benchmark) * np.sqrt(t - 1) / denom))
+
+
+def expected_max_sharpe(n_trials: int, var_trial_sharpes: float) -> float:
+    """SR0: expected maximum of n_trials per-period Sharpe estimates under the null of no skill."""
+    from scipy.stats import norm
+    if n_trials <= 1 or var_trial_sharpes <= 0:
+        return 0.0
+    g = EULER_GAMMA
+    return float(np.sqrt(var_trial_sharpes) * ((1 - g) * norm.ppf(1 - 1 / n_trials)
+                                               + g * norm.ppf(1 - 1 / (n_trials * np.e))))
+
+
+def deflated_sharpe(r: pd.Series, n_trials: int, var_trial_sharpes: float) -> dict:
+    """DSR (Bailey & Lopez de Prado 2014) = PSR against the Sharpe you would expect from the best of
+    n_trials unskilled strategies. var_trial_sharpes is the variance of the trials' PER-PERIOD Sharpes."""
+    sr0 = expected_max_sharpe(n_trials, var_trial_sharpes)
+    return {"dsr": probabilistic_sharpe(r, sr0), "sr0_daily": sr0, "sr0_annual": sr0 * np.sqrt(ANN),
+            "sharpe_daily": float(r.mean() / r.std(ddof=1)), "n_trials": n_trials}

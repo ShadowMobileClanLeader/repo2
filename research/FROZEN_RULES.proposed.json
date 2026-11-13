@@ -1,0 +1,51 @@
+{
+ "frozen_at": null,
+ "strategy": "noise_area_momentum",
+ "source": "Zarattini, Aziz, Barbon (2024) 'Beat the Market', paper defaults; selection rule: defaults kept because the sensitivity grid is uniformly positive and walk-forward re-selection underperformed them",
+ "strategy_params": {
+  "band_mult": 1.0,
+  "lookback": 14,
+  "step": 30,
+  "first_decision_minute": 30,
+  "use_vwap": true,
+  "adjust_dividends": true,
+  "sleeve_target_vol_daily": 0.02,
+  "sleeve_max_leverage": 4.0
+ },
+ "signal_feed_live": "iex",
+ "holdout_primary": "IEX signals, measured costs x1 (x2/x3 and SIP signals reported alongside)",
+ "costs": {
+  "spy_slippage_per_share": 0.00644,
+  "commission_per_share": 0.0035,
+  "min_commission": 0.35,
+  "sec_fee_rate": 2.78e-05,
+  "taf_per_share": 0.000166
+ },
+ "portfolio": {
+  "weight_lookback": 120,
+  "min_history": 60,
+  "corr_penalty": true,
+  "target_vol": 0.05,
+  "vol_lookback": 60,
+  "max_scale": 3.0,
+  "max_gross": 4.0,
+  "max_stock_weight": 0.1,
+  "sleeve_max_gross": {
+   "noise_area": 4.0
+  },
+  "sleeve_max_stock_weight": {
+   "noise_area": 0.0
+  },
+  "daily_loss_limit": 0.03,
+  "kill_drawdown": 0.12
+ },
+ "vol_target_rule": "highest of 5/7.5/10% with dev max DD at 2x measured costs >= -12% -> 5%",
+ "session": {
+  "flat_by": "close - 5 min (15:55; 12:55 on half days)"
+ },
+ "rejected": {
+  "orb_stocks_in_play": "net negative at measured costs in every variant/parameter (best Sharpe -3.0)",
+  "cross_sectional": "net negative at measured costs in every signal/parameter (best -1.06)",
+  "vwap_mean_reversion": "control; negative before costs"
+ }
+}
