@@ -17,7 +17,13 @@ python -m pytest tests/test_engine.py::test_flat_by_1555_and_no_decisions_after_
 python -m scripts.download_data calendar candidates daily features spy open5   # fill parquet cache (stages are independent args)
 python -m scripts.check_feed                          # IEX vs SIP report -> research/phase1_feed_report.json
 python -m scripts.engine_sanity                       # engine vs independent SPY calc + cost drag
+python -m scripts.paper_trade                         # Phase 5: trade today's session on PAPER (blocks to close)
+python -m scripts.paper_trade --flatten               # emergency flatten of OUR SPY stock position only
+python -m scripts.daily_report [YYYY-MM-DD]           # after 16:15 ET -> live/reports/<date>.md
 ```
+
+Live trading uses `intraday/live.py` adapters around the unchanged Engine. The paper account holds
+positions that are not ours (options): the live broker tracks and closes only its own fills.
 
 Needs `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` in the environment. The cache (`data/cache/`,
 git-ignored) is lost when a cloud container is reclaimed; rebuild with `scripts/download_data.py`.

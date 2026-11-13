@@ -54,6 +54,24 @@ python -m scripts.engine_sanity     # end-to-end engine check on SPY
 python -m pytest -q
 ```
 
+## Phase 5 — paper forward test (Alpaca PAPER only)
+
+The frozen noise-area rules **failed** the one-shot holdout; they are paper-traded as a labelled
+forward test to collect new out-of-sample data. Same `Engine` and strategy as the backtests; the
+live adapters are `intraday/live.py` (broker, IEX bar feed, market data).
+
+```bash
+python -m scripts.paper_trade --bootstrap   # once: simulated sleeve history for the vol target
+python -m scripts.paper_trade               # trade today's session (run before 09:30 ET; blocks to the close)
+python -m scripts.paper_trade --flatten     # emergency: cancel our orders, close OUR SPY stock position
+python -m scripts.daily_report              # after 16:15 ET -> live/reports/<date>.md
+touch live/KILL                             # kill switch: flatten and stop (delete to re-enable)
+```
+
+The runner only manages positions it opened itself (the paper account may hold other positions).
+Logs: `live/<date>/events.jsonl` (every decision, order and fill with its reason).
+Paper fills are optimistic and short-borrow is simplified, so paper results overstate real performance.
+
 Third-party data: `data/reference/sp500_ticker_start_end.csv` from
 [fja05680/sp500](https://github.com/fja05680/sp500) (MIT licence), used for point-in-time
 S&P 500 membership.

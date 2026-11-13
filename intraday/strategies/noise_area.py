@@ -45,6 +45,7 @@ class NoiseAreaMomentum:
         self.session = session
         self.vwap = SessionVWAP()
         self.open_px = None
+        self.decisions = []
         prev = md.daily_history(self.symbol, max(self.vol_lookback, 1) + 1)
         self.dividend = md.ex_dividend(self.symbol) if self.adjust_dividends else 0.0
         self.prev_close = float(prev["close"].iloc[-1]) - self.dividend if len(prev) else np.nan
@@ -100,12 +101,21 @@ class NoiseAreaMomentum:
         px, pos = b.close, ctx.position(self.symbol)
         up_stop = max(hi, v) if self.use_vwap else hi
         dn_stop = min(lo, v) if self.use_vwap else lo
+        out, why = None, f"hold: {px:.2f} within/no change (UB {hi:.2f}, LB {lo:.2f}, VWAP {v:.2f})"
         if pos > 0 and px < up_stop:
-            return {self.symbol: Target(0.0, reason=f"long trail: {px:.2f} < max(UB {hi:.2f}, VWAP {v:.2f})")}
-        if pos < 0 and px > dn_stop:
-            return {self.symbol: Target(0.0, reason=f"short trail: {px:.2f} > min(LB {lo:.2f}, VWAP {v:.2f})")}
-        if pos <= 0 and px > hi and (not self.use_vwap or px > v):
-            return {self.symbol: Target(self.leverage, reason=f"break up: {px:.2f} > UB {hi:.2f} & VWAP {v:.2f}, lev {self.leverage:.2f}")}
-        if pos >= 0 and px < lo and (not self.use_vwap or px < v):
-            return {self.symbol: Target(-self.leverage, reason=f"break down: {px:.2f} < LB {lo:.2f} & VWAP {v:.2f}, lev {self.leverage:.2f}")}
-        return None
+            why = f"long trail: {px:.2f} < max(UB {hi:.2f}, VWAP {v:.2f})"
+            out = {self.symbol: Target(0.0, reason=why)}
+        elif pos < 0 and px > dn_stop:
+            why = f"short trail: {px:.2f} > min(LB {lo:.2f}, VWAP {v:.2f})"
+            out = {self.symbol: Target(0.0, reason=why)}
+        elif pos <= 0 and px > hi and (not self.use_vwap or px > v):
+            why = f"break up: {px:.2f} > UB {hi:.2f} & VWAP {v:.2f}, lev {self.leverage:.2f}"
+            out = {self.symbol: Target(self.leverage, reason=why)}
+        elif pos >= 0 and px < lo and (not self.use_vwap or px < v):
+            why = f"break down: {px:.2f} < LB {lo:.2f} & VWAP {v:.2f}, lev {self.leverage:.2f}"
+            out = {self.symbol: Target(-self.leverage, reason=why)}
+        # every decision is recorded (live runner logs these), whether or not it trades
+        self.__dict__.setdefault("decisions", []).append(
+            {"time": str(now), "close": px, "ub": hi, "lb": lo, "vwap": v, "position": pos,
+             "action": "trade" if out else "none", "reason": why})
+        return out
