@@ -37,6 +37,9 @@ are skipped; a process stuck in long 429 back-offs recovers faster if restarted.
 * **Never tune on the holdout** (2025-11-12 → 2026-11-11, frozen in `config.py` — do not move it).
   Say so explicitly if tempted. Holdout reads raise `HoldoutLockedError` until
   `research/FROZEN_RULES.json` exists and `splits.unlock_holdout(reason)` is called (logged).
+* **The holdout has been USED (one-shot, 2026-11-13, frozen rules in `research/FROZEN_RULES.json`;
+  result: noise-area failed, see `research/phase4_report.md` §8).** Never re-evaluate a modified rule
+  on 2025-11-12 → 2026-11-11; new evidence must come from data after 2026-11-11 (e.g. forward paper trading).
 * Implement strategies from the cited papers; flag ambiguities instead of guessing. If published
   results don't reproduce, report it — don't adjust parameters until they do.
 * Count every strategy/parameter variant tried (needed for the deflated Sharpe in Phase 4).

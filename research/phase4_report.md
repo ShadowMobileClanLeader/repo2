@@ -71,3 +71,32 @@ Noise area, paper defaults; live signals from IEX; measured costs; single sleeve
 target** (pre-stated rule: highest of 5/7.5/10% with dev max DD at 2× costs ≤ 12% → 5%; 7.5% gave
 −12.7%); gross ≤ 4×; flat by 15:55; daily loss limit 3%; kill switch at 12% drawdown (manual reset).
 Holdout primary metric: IEX signals at measured costs; SIP and 2×/3× costs reported alongside.
+
+## 8. HOLDOUT — one-shot evaluation of the frozen rules (2025-11-12 → 2026-11-11, 251 sessions)
+Rules frozen and committed (9e0cde1, research/FROZEN_RULES.json) before the holdout was unlocked;
+one unlock, logged in research/holdout_access.log. Results: research/phase4/holdout_results.json.
+
+| Holdout | CAGR | Vol | Sharpe | Max DD | Beta | Alpha/yr |
+|---|---|---|---|---|---|---|
+| **Primary: IEX signals, measured costs, 5% vol target** | **−1.6%** | 5.4% | **−0.26** | −4.4% | −0.07 | −0.5% |
+| IEX, 2× costs | −2.0% | 5.4% | −0.34 | −4.7% | −0.07 | −0.9% |
+| IEX, 3× costs | −2.4% | 5.4% | −0.42 | −5.1% | −0.07 | −1.4% |
+| SIP signals, measured costs | −0.7% | 5.4% | −0.10 | −3.7% | −0.07 | +0.4% |
+| Sleeve at full strategy leverage (IEX, ×1) | −7.5% | | −0.47 | −14.5% | | |
+| SPY buy-and-hold | +12.5% | 13.7% | 0.93 | −8.9% | 1 | |
+
+Monthly (primary): 9 of 13 months negative; largest month −1.5% (Sep 2026). Kill switch never tripped.
+
+## 9. Verdict
+**No strategy survives out of sample. Nothing passes Phase 4.**
+- The only development-period survivor (SPY noise-area momentum) lost money in the holdout under
+  every cost level and both signal feeds, and underperformed SPY buy-and-hold by ~14 points.
+- One year is a short test (a true Sharpe-0.9 strategy has roughly a 1-in-6 chance of a negative
+  year), but it is consistent with everything else: the deflated Sharpe was only ~0.7 after
+  charging for our trials, the strategy was flat in 2025 (+2.0%) and in a drawdown entering the
+  holdout, and capacity is small. The evidence does not support claiming an edge.
+- ORB stocks-in-play, the cross-sectional strategies and the VWAP control were already rejected on
+  the development period (net negative at measured costs at every parameter tested).
+- Temptation flagged and refused: the wider band (1.25) looked better in development; I have not
+  run it (or anything else) on the holdout. The holdout is now used up — any re-test of a modified
+  rule on 2025-11 → 2026-11 would be tuning on the holdout.
