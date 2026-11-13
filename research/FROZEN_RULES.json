@@ -1,5 +1,5 @@
 {
- "frozen_at": null,
+ "frozen_at": "2026-11-13T18:09:20.039592+00:00",
  "strategy": "noise_area_momentum",
  "source": "Zarattini, Aziz, Barbon (2024) 'Beat the Market', paper defaults; selection rule: defaults kept because the sensitivity grid is uniformly positive and walk-forward re-selection underperformed them",
  "strategy_params": {
@@ -47,5 +47,6 @@
   "orb_stocks_in_play": "net negative at measured costs in every variant/parameter (best Sharpe -3.0)",
   "cross_sectional": "net negative at measured costs in every signal/parameter (best -1.06)",
   "vwap_mean_reversion": "control; negative before costs"
- }
+ },
+ "approved_by": "project owner (vol target 5% per pre-stated rule)"
 }
