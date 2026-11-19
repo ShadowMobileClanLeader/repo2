@@ -24,10 +24,11 @@ from intraday.live import LiveMarketData  # noqa: E402
 from intraday.backtest import bar_events  # noqa: E402
 from intraday.sim_broker import SimBroker  # noqa: E402
 from scripts import phase2_run as P2R  # noqa: E402
-from scripts.paper_trade import LABEL, LIVE, RETURNS, make_strategy, rules  # noqa: E402
+from scripts.paper_trade import LIVE, RETURNS, make_strategy, rules  # noqa: E402
 
 WARNINGS = """> **Read before trusting these numbers**
-> - **Forward test only:** this strategy FAILED the one-shot holdout (research/phase4_report.md). It is paper-traded to collect new out-of-sample data, not because it passed.
+> - **Forward test only:** the base strategy FAILED the one-shot holdout (research/phase4_report.md). It is paper-traded to collect new out-of-sample data, not because it passed.
+> - **Untested filter (from 2026-11-19):** trades only on negative dealer-gamma days. The GEX filter has NEVER been backtested (no historical open interest); its sign depends on an assumed dealer positioning, and Alpaca's open interest can be two sessions old.
 > - **Alpaca paper fills are optimistic:** simulated fills at/near the quote with no queue position, no partial-fill realism and no market impact; real fills would be worse.
 > - **Short selling is simplified:** paper shorting assumes borrow is always available and free; real borrow availability, locate requirements and fees are not modelled (SPY is easy to borrow, but not free).
 > - Paper results will therefore **overstate** real performance."""
@@ -70,14 +71,17 @@ def fill_comparison(client: AlpacaClient, ev: list[dict], day: str) -> pd.DataFr
     return pd.DataFrame(rows)
 
 
-def shadow_backtest(client: AlpacaClient, day: str, start_after: pd.Timestamp | None, capital: float) -> dict:
+def shadow_backtest(client: AlpacaClient, day: str, start_after: pd.Timestamp | None, capital: float,
+                    use_gex: bool = True) -> dict:
     """Same strategy, same capital, same start time, simulated fills on IEX bars with measured costs."""
     r = rules()
     md = LiveMarketData(client)
     session = md.session_for(pd.Timestamp(day).date())
     md.set_session(session)
-    strat = make_strategy(r)
+    strat = make_strategy(r, gex=use_gex)
     syms = strat.prepare_session(session, md)
+    if not syms:
+        return {"pnl": 0.0, "fills": []}
     o, c = session.open.tz_convert(UTC), session.close.tz_convert(UTC) - pd.Timedelta(seconds=1)
     bars = client.bars(syms, "1Min", o.isoformat(), c.isoformat(), "iex", "raw")
     events = list(bar_events(bars))
@@ -103,10 +107,12 @@ def main(day: str | None = None):
     start_ev = next((e for e in ev if e["event"] == "catch_up"), None)
     start_after = pd.Timestamp(start_ev["logged_at"]).floor("min") if start_ev and summ.get("started_mid_session") else None
     fills = fill_comparison(client, ev, day)
-    shadow = shadow_backtest(client, day, start_after, summ["sleeve_capital"])
+    start_ev0 = next((e for e in ev if e["event"] == "start"), {})
+    use_gex = bool(start_ev0.get("gex_filter", False))
+    shadow = shadow_backtest(client, day, start_after, summ["sleeve_capital"], use_gex)
 
     hist = pd.read_csv(RETURNS)
-    live = hist[hist["source"] == "live"].copy()
+    live = hist[hist["source"].isin(["live", "live_filtered_out"])].copy()
     live["port"] = live["ret"].astype(float) * summ["scale"]
     eq = (1 + live["port"]).cumprod()
     dd_now, dd_max = float(eq.iloc[-1] / eq.max() - 1), float((eq / eq.cummax() - 1).min())
@@ -119,7 +125,15 @@ def main(day: str | None = None):
     beta, alpha = metrics.beta_alpha(lr, spy_r) if len(lr) >= 20 else (np.nan, np.nan)
 
     decisions = [e for e in ev if e["event"] == "decision" and e.get("phase") == "live"]
-    lines = [f"# Paper forward test — {day}", "", f"**{LABEL}**", "", WARNINGS, "",
+    gx = summ.get("gex") or {}
+    gex_line = ("- Gamma filter: off (frozen rules)" if not use_gex else
+                f"- Gamma regime: **{gx.get('regime', 'unavailable')}** — est. dealer GEX "
+                f"{(gx.get('total_gex_usd_per_1pct') or float('nan')) / 1e9:+,.1f} bn $ per 1% move "
+                f"(SPX {((gx.get('by_underlying') or {}).get('SPX') or {}).get('gex_usd_per_1pct', float('nan')) / 1e9:+,.1f} bn, "
+                f"SPY {((gx.get('by_underlying') or {}).get('SPY') or {}).get('gex_usd_per_1pct', float('nan')) / 1e9:+,.1f} bn; "
+                f"open interest dated {((gx.get('by_underlying') or {}).get('SPX') or {}).get('oi_date')}) → "
+                f"{'traded' if gx.get('regime') == 'negative' else 'sat out'}")
+    lines = [f"# Paper forward test — {day}", "", f"**{summ.get('label', '')}**", "", WARNINGS, "", gex_line, "",
              "## Today",
              f"- Sleeve capital ${summ['sleeve_capital']:,.0f} (base ${summ['base_capital']:,.0f} × vol-target scale {summ['scale']:.2f})"
              + (" — started mid-session (state warmed from earlier bars, no orders for them)" if summ.get("started_mid_session") else ""),

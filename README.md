@@ -62,11 +62,19 @@ live adapters are `intraday/live.py` (broker, IEX bar feed, market data).
 
 ```bash
 python -m scripts.paper_trade --bootstrap   # once: simulated sleeve history for the vol target
+python -m scripts.download_data options_oi  # pre-open: SPX+SPY open interest -> gamma exposure (live/gex/)
 python -m scripts.paper_trade               # trade today's session (run before 09:30 ET; blocks to the close)
+python -m scripts.paper_trade --no-gex      # same, frozen rules WITHOUT the untested gamma filter
 python -m scripts.paper_trade --flatten     # emergency: cancel our orders, close OUR SPY stock position
 python -m scripts.daily_report              # after 16:15 ET -> live/reports/<date>.md
 touch live/KILL                             # kill switch: flatten and stop (delete to re-enable)
 ```
+
+**From 2026-11-19 (owner decision) the paper account trades noise-area + a gamma-exposure
+filter (`intraday/gex.py`, `intraday/strategies/gex_filter.py`): it only trades on days when
+estimated dealer GEX (SPX + SPY, previous session's open interest, Black-Scholes gamma, assumed
+dealers long calls / short puts) is negative. This filter is UNTESTED — Alpaca has no historical
+open interest, so it could not be backtested; daily snapshots in `live/gex/` start that history.
 
 The runner only manages positions it opened itself (the paper account may hold other positions).
 Logs: `live/<date>/events.jsonl` (every decision, order and fill with its reason).

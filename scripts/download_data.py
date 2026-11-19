@@ -75,6 +75,16 @@ def main(stages: list[str]) -> None:
         print(f"iex opening-range bars done ({time.time() - t0:.0f}s)", flush=True)
         data.fetch_intraday(client, data.SPY_1MIN, {d: sorted(s) for d, s in need.items()}, batch=25, workers=8)
         print(f"orb1m done ({time.time() - t0:.0f}s)", flush=True)
+    if "options_oi" in stages:  # today's pre-open SPX+SPY open interest and gamma exposure -> live/gex/
+        from intraday.config import ET
+        from intraday.live import LiveMarketData
+        md = LiveMarketData(client)
+        md.session = md.session_for(pd.Timestamp.now(tz=ET).date())
+        if md.session is None:
+            print("options_oi: no session today", flush=True)
+        else:
+            g = md.gamma_exposure()
+            print("options_oi:", {k: g.get(k) for k in ("asof", "total_gex_usd_per_1pct", "regime")} if g else g, flush=True)
     if "xs5" in stages:         # 5-minute bars for the point-in-time top-200 universe
         need = xs_symbols_by_day()
         data.fetch_intraday(client, XS_5MIN, need, batch=100, workers=8)

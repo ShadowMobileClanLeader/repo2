@@ -28,7 +28,10 @@ LIVE = ROOT / "live"
 KILL = LIVE / "KILL"
 RETURNS = LIVE / "sleeve_returns.csv"
 IEX_1MIN = data.IntradaySpec("iex", "1Min", "raw", "rth")
-LABEL = "FORWARD TEST ONLY - strategy failed the one-shot holdout (research/phase4_report.md)"
+LABEL_FROZEN = "FORWARD TEST ONLY - strategy failed the one-shot holdout (research/phase4_report.md)"
+LABEL_GEX = ("UNTESTED - noise-area (failed holdout) + gamma-exposure filter that has NEVER been backtested "
+             "(no historical open interest); traded by owner decision 2026-11-19")
+LABEL = LABEL_GEX
 
 
 class JsonlLog:
@@ -46,7 +49,16 @@ def rules() -> dict:
     return json.loads(FROZEN_RULES_FILE.read_text())
 
 
-def make_strategy(r: dict) -> NoiseAreaMomentum:
+def make_strategy(r: dict, gex: bool = True):
+    """Frozen noise-area rules, wrapped by the (untested) gamma-regime filter unless gex=False."""
+    s = _noise(r)
+    if gex:
+        from intraday.strategies.gex_filter import GammaRegimeFilter
+        return GammaRegimeFilter(s, threshold=0.0)
+    return s
+
+
+def _noise(r: dict) -> NoiseAreaMomentum:
     p = r["strategy_params"]
     return NoiseAreaMomentum(band_mult=p["band_mult"], lookback=p["lookback"], step=p["step"],
                              first_decision=p["first_decision_minute"], use_vwap=p["use_vwap"],
@@ -68,7 +80,7 @@ def bootstrap(r: dict, sessions: int = 90) -> None:
     splits.unlock_holdout("live warm-up: vol-target estimate for frozen rules (no evaluation)")
     sess = calendar.sessions(HOLDOUT_END - dt.timedelta(days=200), HOLDOUT_END)[-sessions:]
     feats = pd.read_parquet(FEATURES_FILE, filters=[("symbol", "==", "SPY")])
-    res = run_backtest(make_strategy(r), sess[0].date, sess[-1].date, IEX_1MIN, costs=P2R.SPY_COSTS,
+    res = run_backtest(make_strategy(r, gex=False), sess[0].date, sess[-1].date, IEX_1MIN, costs=P2R.SPY_COSTS,
                        md=HistoricalMarketData(features=feats), reset_capital_daily=True)
     df = pd.DataFrame({"date": res.returns.index, "ret": res.returns.values, "source": "bootstrap_sim"})
     LIVE.mkdir(parents=True, exist_ok=True)
@@ -91,7 +103,8 @@ def flatten(client: AlpacaClient) -> None:
             print("flatten order sent for SPY", q)
 
 
-def trade_today(client: AlpacaClient, r: dict, base_capital: float) -> None:
+def trade_today(client: AlpacaClient, r: dict, base_capital: float, use_gex: bool = True) -> None:
+    label = LABEL_GEX if use_gex else LABEL_FROZEN
     today = pd.Timestamp.now(tz=ET).date()
     md = LiveMarketData(client)
     session = md.session_for(today)
@@ -101,14 +114,15 @@ def trade_today(client: AlpacaClient, r: dict, base_capital: float) -> None:
         print("too late to trade today"); return
     day_dir = LIVE / str(today)
     log = JsonlLog(day_dir / "events.jsonl")
-    log(event="start", label=LABEL, rules_frozen_at=r["frozen_at"], base_capital=base_capital)
+    log(event="start", label=label, rules_frozen_at=r["frozen_at"], base_capital=base_capital, gex_filter=use_gex)
     if KILL.exists():
         log(event="halt", reason=f"kill switch file present: {KILL.read_text()[:200]}")
         print("KILL file present - not trading"); return
 
     hist = pd.read_csv(RETURNS) if RETURNS.exists() else pd.DataFrame(columns=["date", "ret", "source"])
     pc = r["portfolio"]
-    scale = vol_target_scale(hist["ret"].astype(float), pc["target_vol"], pc["vol_lookback"], pc["max_scale"],
+    traded = hist[hist["source"] != "live_filtered_out"]          # sit-out days are not trading-day risk
+    scale = vol_target_scale(traded["ret"].astype(float), pc["target_vol"], pc["vol_lookback"], pc["max_scale"],
                              pc["max_gross"], pc["sleeve_max_gross"]["noise_area"])
     alloc = base_capital * scale
     log(event="allocation", vol_target=pc["target_vol"], scale=scale, sleeve_capital=alloc,
@@ -117,8 +131,23 @@ def trade_today(client: AlpacaClient, r: dict, base_capital: float) -> None:
         log(event="halt", reason="no allocation (insufficient history)"); return
 
     md.set_session(session)
-    strat = make_strategy(r)
+    strat = make_strategy(r, gex=use_gex)
     symbols = strat.prepare_session(session, md)
+    gx = getattr(strat, "gex", None) if use_gex else None
+    if use_gex:
+        log(event="gamma_regime", active=strat.active, gex=gx)
+    if not symbols:
+        summary = {"date": str(today), "label": label, "base_capital": base_capital, "scale": scale,
+                   "sleeve_capital": alloc, "sleeve_pnl": 0.0, "sleeve_return": 0.0, "portfolio_return": 0.0,
+                   "fees": 0.0, "fills": 0, "max_gross": 0.0,
+                   "halted": "gamma filter: not trading today (GEX >= 0 or unavailable)",
+                   "started_mid_session": False, "decisions_live": 0, "gex": gx}
+        (day_dir / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
+        hist = pd.concat([hist, pd.DataFrame([{"date": str(today), "ret": 0.0, "source": "live_filtered_out"}])])
+        hist.to_csv(RETURNS, index=False)
+        log(event="end", **summary)
+        print(json.dumps(summary, indent=1, default=str))
+        return
     log(event="prepared", symbols=symbols, prev_close=strat.prev_close, dividend=getattr(strat, "dividend", 0.0),
         leverage=strat.leverage, sigma_points=int(len(strat.sigma)))
 
@@ -151,11 +180,11 @@ def trade_today(client: AlpacaClient, r: dict, base_capital: float) -> None:
 
     res = engine.run_session(session, Logged())
     pnl = res.eod_equity - res.sod_equity
-    summary = {"date": str(today), "label": LABEL, "base_capital": base_capital, "scale": scale,
+    summary = {"date": str(today), "label": label, "base_capital": base_capital, "scale": scale,
                "sleeve_capital": alloc, "sleeve_pnl": pnl, "sleeve_return": pnl / alloc,
                "portfolio_return": pnl / base_capital, "fees": res.fees, "fills": res.n_fills,
                "max_gross": res.max_gross, "halted": res.halted,
-               "started_mid_session": bool(warm), "decisions_live": len(strat.decisions) - n_warm}
+               "started_mid_session": bool(warm), "decisions_live": len(strat.decisions) - n_warm, "gex": gx}
     (day_dir / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
     hist = pd.concat([hist, pd.DataFrame([{"date": str(today), "ret": pnl / alloc, "source": "live"}])])
     hist.to_csv(RETURNS, index=False)
@@ -176,6 +205,7 @@ def main():
     ap.add_argument("--bootstrap", action="store_true")
     ap.add_argument("--flatten", action="store_true")
     ap.add_argument("--capital", type=float, default=100_000.0)
+    ap.add_argument("--no-gex", action="store_true", help="trade the frozen rules without the untested GEX filter")
     a = ap.parse_args()
     client = AlpacaClient()                     # refuses any non-paper endpoint
     r = rules()
@@ -184,7 +214,7 @@ def main():
     elif a.flatten:
         flatten(client)
     else:
-        trade_today(client, r, a.capital)
+        trade_today(client, r, a.capital, use_gex=not a.no_gex)
 
 
 if __name__ == "__main__":

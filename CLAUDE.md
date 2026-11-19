@@ -19,10 +19,14 @@ python -m scripts.check_feed                          # IEX vs SIP report -> res
 python -m scripts.engine_sanity                       # engine vs independent SPY calc + cost drag
 python -m scripts.paper_trade                         # Phase 5: trade today's session on PAPER (blocks to close)
 python -m scripts.paper_trade --flatten               # emergency flatten of OUR SPY stock position only
+python -m scripts.download_data options_oi            # pre-open SPX+SPY open interest -> live/gex/<date>.json
 python -m scripts.daily_report [YYYY-MM-DD]           # after 16:15 ET -> live/reports/<date>.md
 ```
 
-Live trading uses `intraday/live.py` adapters around the unchanged Engine. The paper account holds
+Live trading uses `intraday/live.py` adapters around the unchanged Engine. Since 2026-11-19 the
+live strategy is noise-area wrapped in `GammaRegimeFilter` (trade only when pre-open dealer GEX < 0) —
+an owner-approved, UNTESTED signal (no historical open interest exists); `--no-gex` reverts to the
+frozen rules. GEX snapshots are computed once pre-open and reused (never recomputed after the open). The paper account holds
 positions that are not ours (options): the live broker tracks and closes only its own fills.
 
 Needs `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` in the environment. The cache (`data/cache/`,

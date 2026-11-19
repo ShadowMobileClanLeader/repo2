@@ -9,6 +9,7 @@ broker tracks ONLY the positions created by its own fills and only ever closes t
 from __future__ import annotations
 
 import datetime as dt
+import json
 import math
 import time
 from typing import Callable, Iterator
@@ -223,6 +224,31 @@ class LiveMarketData:
                                                      self.intraday_feed, "raw")
             frames.append(self._intraday[d])
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def gamma_exposure(self) -> dict | None:
+        """Pre-open dealer GEX for the session (SPX + SPY, previous session's open interest).
+        Saved to live/gex/<date>.json the first time; later calls (incl. the after-close report)
+        reuse the saved snapshot so the signal is never recomputed with later data."""
+        from . import gex as G
+        from .config import ROOT
+        d = ROOT / "live" / "gex"
+        path = d / f"{self.session.date}.json"
+        if path.exists():
+            return json.loads(path.read_text())
+        if pd.Timestamp.now(tz=UTC) >= self.session.open.tz_convert(UTC) + pd.Timedelta(minutes=30):
+            return None              # too late to compute an honest pre-open value: fail closed
+        try:
+            summary, table = G.snapshot(self.client, self.session.date)
+        except Exception as e:      # data problem -> no signal -> filter does not trade
+            return {"error": str(e)[:300], "total_gex_usd_per_1pct": None}
+        d.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(summary, indent=1, default=str))
+        if len(table):
+            agg = (table.assign(sign=np.where(table.type == "call", 1.0, -1.0))
+                   .assign(gex=lambda t: t.sign * t.gamma * t.oi * t.multiplier * t.forward ** 2 * 0.01)
+                   .groupby(["underlying", "strike"]).agg(oi=("oi", "sum"), gex=("gex", "sum")).reset_index())
+            agg.to_csv(d / f"{self.session.date}_strikes.csv.gz", index=False)
+        return summary
 
     def ex_dividend(self, symbol: str) -> float:
         d = self.session.date.isoformat()
