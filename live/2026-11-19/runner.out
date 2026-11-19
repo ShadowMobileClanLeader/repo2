@@ -1,0 +1,43 @@
+{
+ "date": "2026-11-19",
+ "label": "UNTESTED - noise-area (failed holdout) + gamma-exposure filter that has NEVER been backtested (no historical open interest); traded by owner decision 2026-11-19",
+ "base_capital": 100000.0,
+ "scale": 0.29933673017011103,
+ "sleeve_capital": 29933.673017011104,
+ "sleeve_pnl": 115.80563381800312,
+ "sleeve_return": 0.0038687411916403162,
+ "portfolio_return": 0.0011580563381800313,
+ "fees": 1.9843881820000002,
+ "fills": 4,
+ "max_gross": 35570.325,
+ "halted": "",
+ "started_mid_session": false,
+ "decisions_live": 12,
+ "gex": {
+  "asof": "2026-11-19",
+  "computed_at": "2026-11-19 14:13:11.606346+00:00",
+  "convention": "dealer long calls, short puts",
+  "by_underlying": {
+   "SPX": {
+    "spot_est": 7324.735,
+    "gex_usd_per_1pct": -61338675768.83392,
+    "contracts": 18344,
+    "contracts_with_iv": 5210,
+    "total_oi": 15950244.0,
+    "oi_date": "2026-11-17",
+    "gamma_flip": 7616.159662990243
+   },
+   "SPY": {
+    "spot_est": 730.25,
+    "gex_usd_per_1pct": -15769976338.190952,
+    "contracts": 5872,
+    "contracts_with_iv": 4786,
+    "total_oi": 12922439.0,
+    "oi_date": "2026-11-17",
+    "gamma_flip": 754.7836988550187
+   }
+  },
+  "total_gex_usd_per_1pct": -77108652107.02487,
+  "regime": "negative"
+ }
+}
